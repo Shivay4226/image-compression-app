@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -11,11 +11,10 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { Loader2, Zap, ShieldCheck, Sparkles } from 'lucide-react';
 import { hashPassword } from '@/lib/crypto';
+import { SearchParamsProvider } from './search-params-provider';
 
-export default function LoginPage() {
+function LoginForm() {
     const router = useRouter();
-    const searchParams = useSearchParams();
-    const callbackUrl = searchParams.get('callbackUrl') || '/';
     const [isLoading, setIsLoading] = useState(false);
 
     async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -34,14 +33,13 @@ export default function LoginPage() {
                 email,
                 password: hashedPassword,
                 redirect: false,
-                callbackUrl,
             });
 
             if (result?.error) {
                 toast.error(result.error);
             } else {
                 toast.success('Logged in successfully');
-                router.push(callbackUrl);
+                router.push('/');
                 router.refresh();
             }
         } catch (error) {
@@ -194,5 +192,15 @@ export default function LoginPage() {
 
             </div>
         </div>
+    );
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense fallback={<div>Loading...</div>}>
+            <SearchParamsProvider>
+                <LoginForm />
+            </SearchParamsProvider>
+        </Suspense>
     );
 }
