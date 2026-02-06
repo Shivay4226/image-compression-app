@@ -3,6 +3,7 @@
 import React from "react"
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import { Upload, X, Grid3x3, List, Zap } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -39,9 +40,6 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const FREE_MAX_IMAGES = 100;
 const PRO_MAX_IMAGES = 1000;
 const PRO_UPGRADE_SENTINEL = '__PRO_UPGRADE__';
-const PLAN_STORAGE_KEY = 'imagecompress_plan';
-
-type Plan = 'free' | 'pro';
 
 interface ImageUploaderProps {
   onImagesSelected: (images: UploadedImage[]) => void;
@@ -51,6 +49,7 @@ interface ImageUploaderProps {
 }
 
 export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompressing }: ImageUploaderProps) {
+  const { data: session } = useSession();
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [isDragActive, setIsDragActive] = useState(false);
   const [error, setError] = useState<string>('');
@@ -60,49 +59,21 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
   const [pendingRemoveIds, setPendingRemoveIds] = useState<string[]>([]);
   const [proOpen, setProOpen] = useState(false);
   const [attemptedTotalCount, setAttemptedTotalCount] = useState(0);
-  const [activePlan, setActivePlan] = useState<Plan>(() => {
-    if (typeof window === 'undefined') return 'free';
-    const plan = localStorage.getItem(PLAN_STORAGE_KEY) as Plan | null;
-    return plan === 'pro' ? 'pro' : 'free';
-  });
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const getStoredPlan = (): Plan => {
-    const plan = (localStorage.getItem(PLAN_STORAGE_KEY) as Plan | null) ?? 'free';
-    return plan === 'pro' ? 'pro' : 'free';
-  };
-
-  useEffect(() => {
-    setActivePlan(getStoredPlan());
-
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== PLAN_STORAGE_KEY) return;
-      setActivePlan(getStoredPlan());
-    };
-
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
-
-  useEffect(() => {
-    if (activePlan === 'pro' && proOpen) setProOpen(false);
-  }, [activePlan, proOpen]);
 
   const validateFiles = (files: File[]): string | null => {
     if (files.length === 0) return 'No files selected';
-
+    
     const totalCount = uploadedImages.length + files.length;
-    const plan = getStoredPlan();
+    const isPro = (session?.user as any)?.isPro;
 
-    if (plan !== activePlan) setActivePlan(plan);
-
-    if (plan !== 'pro' && totalCount > FREE_MAX_IMAGES) {
+    if (!isPro && totalCount > FREE_MAX_IMAGES) {
       setAttemptedTotalCount(totalCount);
       setProOpen(true);
       return PRO_UPGRADE_SENTINEL;
     }
 
-    if (plan === 'pro' && totalCount > PRO_MAX_IMAGES) {
+    if (isPro && totalCount > PRO_MAX_IMAGES) {
       return `Maximum ${PRO_MAX_IMAGES} images allowed (current: ${uploadedImages.length})`;
     }
 

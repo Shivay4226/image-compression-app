@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
     const formatStr = formData.get('format') as string;
     const quality = parseInt(formData.get('quality') as string) || 80;
     const lossless = formData.get('lossless') === 'true';
+    const responseMode = (formData.get('response') as string | null) ?? 'binary';
 
     // Validate file
     if (!file) {
@@ -80,16 +81,30 @@ export async function POST(request: NextRequest) {
     }
 
     const compressedBuffer = await processed.toBuffer();
-    const base64 = compressedBuffer.toString('base64');
     const mimeType = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
 
-    // Return compressed image as base64 with metadata
-    return NextResponse.json({
-      success: true,
-      data: base64,
-      mimeType,
-      size: compressedBuffer.length,
-      originalSize: imageBuffer.length,
+    if (responseMode === 'json') {
+      const base64 = compressedBuffer.toString('base64');
+
+      // Return compressed image as base64 with metadata
+      return NextResponse.json({
+        success: true,
+        data: base64,
+        mimeType,
+        size: compressedBuffer.length,
+        originalSize: imageBuffer.length,
+      });
+    }
+
+    return new NextResponse(new Uint8Array(compressedBuffer), {
+      status: 200,
+      headers: {
+        'Content-Type': mimeType,
+        'Cache-Control': 'no-store',
+        'X-Original-Size': String(imageBuffer.length),
+        'X-Compressed-Size': String(compressedBuffer.length),
+        'X-Format': format,
+      },
     });
   } catch (error) {
     console.error('Image processing error:', error);

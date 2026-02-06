@@ -13,7 +13,7 @@ import { Loader2, Zap, ShieldCheck, Sparkles } from 'lucide-react';
 import { hashPassword } from '@/lib/crypto';
 import { SearchParamsProvider } from './search-params-provider';
 
-function LoginForm() {
+function LoginForm({ callbackUrl }: { callbackUrl: string }) {
     const router = useRouter();
     const [isLoading, setIsLoading] = useState(false);
 
@@ -33,13 +33,14 @@ function LoginForm() {
                 email,
                 password: hashedPassword,
                 redirect: false,
+                callbackUrl,
             });
 
             if (result?.error) {
                 toast.error(result.error);
             } else {
                 toast.success('Logged in successfully');
-                router.push('/');
+                router.push(callbackUrl);
                 router.refresh();
             }
         } catch (error) {
@@ -199,7 +200,7 @@ export default function LoginPage() {
     return (
         <Suspense fallback={<div>Loading...</div>}>
             <SearchParamsProvider>
-                <LoginForm />
+                {(callbackUrl) => <LoginForm callbackUrl={callbackUrl} />}
             </SearchParamsProvider>
         </Suspense>
     );
