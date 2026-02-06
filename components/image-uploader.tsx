@@ -37,6 +37,7 @@ interface UploadedImage {
 
 const SUPPORTED_FORMATS = ['png', 'jpg', 'jpeg', 'webp', 'avif'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_TOTAL_SIZE = 4 * 1024 * 1024 * 1024;
 const FREE_MAX_IMAGES = 100;
 const PRO_MAX_IMAGES = 1000;
 const PRO_UPGRADE_SENTINEL = '__PRO_UPGRADE__';
@@ -96,7 +97,27 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
       if (!files) return;
 
       const fileArray = Array.from(files);
-      const validationError = validateFiles(fileArray);
+
+      const currentTotalBytes = uploadedImages.reduce((sum, img) => sum + img.originalSize, 0);
+      let remainingBytes = Math.max(0, MAX_TOTAL_SIZE - currentTotalBytes);
+      const acceptedFiles: File[] = [];
+      const skippedFiles: File[] = [];
+
+      for (const file of fileArray) {
+        if (file.size <= remainingBytes) {
+          acceptedFiles.push(file);
+          remainingBytes -= file.size;
+        } else {
+          skippedFiles.push(file);
+        }
+      }
+
+      if (acceptedFiles.length === 0) {
+        setError('Total upload limit is 4GB. Please select fewer/smaller images.');
+        return;
+      }
+
+      const validationError = validateFiles(acceptedFiles);
 
       if (validationError) {
         if (validationError !== PRO_UPGRADE_SENTINEL) {
@@ -107,7 +128,7 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
         return;
       }
 
-      const newImages: UploadedImage[] = fileArray.map((file) => ({
+      const newImages: UploadedImage[] = acceptedFiles.map((file) => ({
         id: `${Date.now()}-${Math.random()}`,
         file,
         preview: URL.createObjectURL(file),
@@ -116,7 +137,12 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
 
       setUploadedImages((prev) => [...prev, ...newImages]);
       onImagesSelected([...uploadedImages, ...newImages]);
-      setError('');
+
+      if (skippedFiles.length > 0) {
+        setError(`Total upload limit is 4GB. ${skippedFiles.length} file(s) were skipped.`);
+      } else {
+        setError('');
+      }
 
       if (inputRef.current) {
         inputRef.current.value = '';
@@ -246,7 +272,7 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
           or click to browse from your computer
         </p>
         <p className="text-xs text-muted-foreground mt-3 opacity-70">
-          PNG, JPG, WebP, AVIF • Max 10MB each • Free up to {FREE_MAX_IMAGES} images (Pro up to {PRO_MAX_IMAGES})
+          PNG, JPG, WebP, AVIF • Max 10MB each • Total up to 4GB • Free up to {FREE_MAX_IMAGES} images (Pro up to {PRO_MAX_IMAGES})
         </p>
       </div>
 
