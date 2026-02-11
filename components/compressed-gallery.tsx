@@ -202,10 +202,33 @@ export function CompressedGallery({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedImage, selectedIndex, completedKey]);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 100;
+
+  const totalPages = Math.ceil(images.length / ITEMS_PER_PAGE);
+
+  const paginatedImages = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return images.slice(start, start + ITEMS_PER_PAGE);
+  }, [images, currentPage]);
+
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    } else if (totalPages > 0 && currentPage === 0) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
+
+  // Reset to page 1 when images array is cleared or completely changed (detected by length change to 0 or very small)
+  useEffect(() => {
+    if (images.length === 0) setCurrentPage(1);
+  }, [images.length]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl sm:text-2xl font-bold">Your Compressed Images</h2>
+        <h2 className="text-xl sm:text-2xl font-bold">Your Compressed Images <span className="text-muted-foreground text-lg font-normal">({images.length})</span></h2>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           {showZipDownload && (
             <Button
@@ -255,97 +278,86 @@ export function CompressedGallery({
       </div>
 
       {viewMode === 'grid' && (
-        <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {images.map((image) => {
+        <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {paginatedImages.map((image) => {
             const savings = calculateSavings(image.originalSize, image.compressedSize);
             const originalFormatted = formatFileSize(image.originalSize);
             const compressedFormatted = formatFileSize(image.compressedSize);
 
             return (
-              <Card key={image.id} className="overflow-hidden flex flex-col hover:shadow-lg transition-shadow">
+              <Card key={image.id} className="group relative overflow-hidden border-0 shadow-sm hover:shadow-xl transition-all duration-300 bg-muted/20">
                 <div
-                  className="aspect-square bg-gradient-to-br from-muted to-muted/50 relative overflow-hidden flex items-center justify-center cursor-pointer"
+                  className="aspect-square relative overflow-hidden cursor-pointer"
                   onClick={() => image.status === 'completed' && setSelectedId(image.id)}
                 >
-                  {image.status === 'completed' && (
+                  {image.status === 'completed' ? (
                     <img
                       src={objectUrls[image.id] || "/placeholder.svg"}
                       alt={image.originalName}
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
                     />
-                  )}
-                  {image.status === 'processing' && (
-                    <div className="w-full h-full flex items-center justify-center bg-muted">
-                      <div className="text-center">
-                        <div className="inline-flex items-center justify-center h-12 w-12 rounded-full bg-primary/10 mb-2">
-                          <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                        </div>
-                        <p className="text-xs text-muted-foreground">{image.progress}%</p>
-                      </div>
-                    </div>
-                  )}
-                  {image.status === 'error' && (
-                    <div className="text-center">
-                      <p className="text-sm text-destructive font-medium mb-1">Error</p>
-                      <p className="text-xs text-destructive/80">{image.error}</p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex-1 p-4 space-y-3 flex flex-col">
-                  <div>
-                    <p className="text-sm font-medium truncate">{image.originalName}</p>
-                  </div>
-
-                  {image.status === 'processing' && (
-                    <div className="space-y-2">
-                      <Progress value={image.progress} className="h-1.5" />
-                      <p className="text-xs text-muted-foreground text-center">
-                        Processing... {image.progress}%
-                      </p>
-                    </div>
-                  )}
-
-                  {image.status === 'completed' && (
-                    <div className="space-y-3 text-xs">
-                      <div className="grid grid-cols-2 gap-3 p-3 bg-muted/50 rounded-lg">
-                        <div>
-                          <p className="text-muted-foreground text-xs">Original</p>
-                          <p className="font-semibold text-sm">{originalFormatted}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground text-xs">Compressed</p>
-                          <p className="font-semibold text-sm">{compressedFormatted}</p>
-                        </div>
-                      </div>
-                      {savings > 0 && (
-                        <div className="text-center p-2 bg-accent/10 rounded-lg text-accent font-semibold">
-                          Saved {savings}%
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-muted/50">
+                      {image.status === 'processing' ? (
+                        <>
+                          <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin mb-2" />
+                          <span className="text-xs font-medium text-muted-foreground">{image.progress}%</span>
+                        </>
+                      ) : (
+                        <div className="text-center p-2">
+                          <X className="h-8 w-8 text-destructive mx-auto mb-1" />
+                          <p className="text-xs text-destructive font-medium">Error</p>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {showIndividualDownload && image.status === 'completed' && (
-                    <Button
-                      size="sm"
-                      className="w-full mt-auto gap-2"
-                      onClick={() => onDownload(image)}
-                    >
-                      <Download className="h-4 w-4" />
-                      Download
-                    </Button>
-                  )}
+                  {/* Gradient Overlay for Text */}
+                  <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-100 transition-opacity duration-300 pointer-events-none" />
 
-                  {image.status !== 'processing' && (
+                  {/* Info Content */}
+                  <div className="absolute bottom-0 left-0 right-0 p-3 text-white pointer-events-none">
+                    <p className="font-medium truncate text-sm mb-0.5">{image.originalName}</p>
+                    {image.status === 'completed' && (
+                      <div className="flex items-center justify-between text-xs text-white/90 font-medium">
+                        <span>{compressedFormatted}</span>
+                        <span className="bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded text-[10px] backdrop-blur-sm border border-green-500/30">-{savings}%</span>
+                      </div>
+                    )}
+                    {image.status === 'processing' && (
+                      <p className="text-xs text-white/80">Processing...</p>
+                    )}
+                  </div>
+
+                  {/* Hover Actions Overlay */}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2 backdrop-blur-[2px]">
+                    {showIndividualDownload && image.status === 'completed' && (
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="rounded-full h-10 w-10 shadow-lg hover:scale-110 transition-transform"
+                        onClick={(e) => { e.stopPropagation(); onDownload(image); }}
+                        title="Download"
+                      >
+                        <Download className="h-5 w-5" />
+                      </Button>
+                    )}
                     <Button
-                      size="sm"
-                      className="w-full mt-auto gap-2"
-                      onClick={() => onRemove(image.id)}
+                      size="icon"
+                      variant="destructive"
+                      className="rounded-full h-10 w-10 shadow-lg hover:scale-110 transition-transform"
+                      onClick={(e) => { e.stopPropagation(); onRemove(image.id); }}
+                      title="Remove"
                     >
-                      <X className="h-4 w-4" />
-                      Remove
+                      <X className="h-5 w-5" />
                     </Button>
+                  </div>
+
+                  {/* Top Badges (if needed) */}
+                  {image.status === 'completed' && (
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity delay-100">
+                      {/* Extra badges could go here */}
+                    </div>
                   )}
                 </div>
               </Card>
@@ -356,7 +368,7 @@ export function CompressedGallery({
 
       {viewMode === 'list' && (
         <div className="space-y-3 border rounded-lg divide-y">
-          {images.map((image) => {
+          {paginatedImages.map((image) => {
             const savings = calculateSavings(image.originalSize, image.compressedSize);
             const originalFormatted = formatFileSize(image.originalSize);
             const compressedFormatted = formatFileSize(image.compressedSize);
@@ -382,7 +394,7 @@ export function CompressedGallery({
 
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold truncate">{image.originalName}</p>
-                    
+
                     {image.status === 'processing' && (
                       <div className="mt-3 space-y-2">
                         <Progress value={image.progress} className="h-1.5" />
@@ -391,7 +403,7 @@ export function CompressedGallery({
                         </p>
                       </div>
                     )}
-                    
+
                     {image.status === 'completed' && (
                       <div className="mt-3 flex flex-wrap items-center gap-4">
                         <div className="flex items-center gap-1">
@@ -409,7 +421,7 @@ export function CompressedGallery({
                         )}
                       </div>
                     )}
-                    
+
                     {image.status === 'error' && (
                       <p className="text-xs text-destructive mt-1">{image.error}</p>
                     )}
@@ -445,165 +457,192 @@ export function CompressedGallery({
         </div>
       )}
 
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-8">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground mx-2">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {selectedImage && (
         (() => {
+          if (!selectedImage) return null;
           const savings = calculateSavings(selectedImage.originalSize, selectedImage.compressedSize);
 
           const isPreviewReady = originalLoaded && compressedLoaded;
 
           return (
-        <div 
-          className={
-            isFullscreen
-              ? 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-0'
-              : 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4'
-          }
-          onClick={() => setSelectedId(null)}
-        >
-          <div 
-            className={
-              isFullscreen
-                ? 'bg-background shadow-lg w-screen h-screen overflow-hidden flex flex-col'
-                : 'bg-background rounded-lg shadow-lg max-w-2xl w-full max-h-[90vh] overflow-auto'
-            }
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sticky top-0 bg-background/95 backdrop-blur border-b p-3 sm:p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0 flex items-center gap-2">
-                <h3 className="text-lg font-semibold truncate">{selectedImage.originalName}</h3>
-                {savings > 0 && (
-                  <span className="shrink-0 text-[11px] sm:text-xs px-2 py-1 rounded bg-accent/10 text-accent font-semibold">
-                    -{savings}%
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setIsFullscreen((v) => !v)}
-                  className="h-9 w-9"
-                >
-                  {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
-                </Button>
-
-                {showModalDownload && (
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => {
-                      onDownload(selectedImage);
-                    }}
-                    className="h-9 w-9"
-                  >
-                    <Download className="h-5 w-5" />
-                  </Button>
-                )}
-
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setSelectedId(null)}
-                  className="h-9 w-9"
-                >
-                  <X className="h-5 w-5" />
-                </Button>
-              </div>
-            </div>
-
-            <div className={isFullscreen ? 'p-3 sm:p-4 flex-1 min-h-0 overflow-hidden' : 'p-4 sm:p-6 space-y-6'}>
-              <div className={
+            <div
+              className={
                 isFullscreen
-                  ? 'relative w-full h-full bg-muted rounded-lg overflow-hidden'
-                  : 'relative w-full h-64 sm:h-96 bg-muted rounded-lg overflow-hidden'
-              }>
-                {completedImages.length > 1 && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/70 hover:bg-background z-20"
-                      onClick={() => {
-                        const prevIndex = (selectedIndex - 1 + completedImages.length) % completedImages.length;
-                        setSelectedId(completedImages[prevIndex]?.id ?? null);
-                      }}
-                    >
-                      <ChevronLeft className="h-5 w-5" />
-                    </Button>
-
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/70 hover:bg-background z-20"
-                      onClick={() => {
-                        const nextIndex = (selectedIndex + 1) % completedImages.length;
-                        setSelectedId(completedImages[nextIndex]?.id ?? null);
-                      }}
-                    >
-                      <ChevronRight className="h-5 w-5" />
-                    </Button>
-
-                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs bg-background/70 px-2 py-1 rounded z-20">
-                      {selectedIndex + 1} / {completedImages.length}
-                    </div>
-                  </>
-                )}
-
-                <div className={
+                  ? 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-0'
+                  : 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4'
+              }
+              onClick={() => setSelectedId(null)}
+            >
+              <div
+                className={
                   isFullscreen
-                    ? 'absolute inset-0 grid grid-cols-2'
-                    : 'absolute inset-0 grid grid-cols-1 sm:grid-cols-2'
-                } style={{ pointerEvents: 'none' }}>
-                  <div className="relative border-b sm:border-b-0 sm:border-r border-border/40">
-                    <div className="absolute top-2 left-2 text-[11px] px-2 py-1 rounded bg-background/70">Original</div>
-                    <img
-                      src={originalUrls[selectedImage.id] || "/placeholder.svg"}
-                      alt={selectedImage.originalName}
-                      className="h-full w-full object-contain"
-                      onLoad={() => setOriginalLoaded(true)}
-                    />
+                    ? 'bg-background shadow-lg w-screen h-screen overflow-hidden flex flex-col'
+                    : 'bg-background rounded-lg shadow-lg max-w-2xl w-full max-h-[90vh] overflow-auto'
+                }
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="sticky top-0 bg-background/95 backdrop-blur border-b p-3 sm:p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex items-center gap-2">
+                    <h3 className="text-lg font-semibold truncate">{selectedImage.originalName}</h3>
+                    {savings > 0 && (
+                      <span className="shrink-0 text-[11px] sm:text-xs px-2 py-1 rounded bg-accent/10 text-accent font-semibold">
+                        -{savings}%
+                      </span>
+                    )}
                   </div>
 
-                  <div className="relative">
-                    <div className="absolute top-2 left-2 text-[11px] px-2 py-1 rounded bg-background/70">Compressed</div>
-                    <img
-                      src={objectUrls[selectedImage.id] || "/placeholder.svg"}
-                      alt={selectedImage.originalName}
-                      className="h-full w-full object-contain"
-                      onLoad={() => setCompressedLoaded(true)}
-                    />
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setIsFullscreen((v) => !v)}
+                      className="h-9 w-9"
+                    >
+                      {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+                    </Button>
+
+                    {showModalDownload && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          onDownload(selectedImage);
+                        }}
+                        className="h-9 w-9"
+                      >
+                        <Download className="h-5 w-5" />
+                      </Button>
+                    )}
+
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setSelectedId(null)}
+                      className="h-9 w-9"
+                    >
+                      <X className="h-5 w-5" />
+                    </Button>
                   </div>
                 </div>
 
-                {!isPreviewReady && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                <div className={isFullscreen ? 'p-3 sm:p-4 flex-1 min-h-0 overflow-hidden' : 'p-4 sm:p-6 space-y-6'}>
+                  <div className={
+                    isFullscreen
+                      ? 'relative w-full h-full bg-muted rounded-lg overflow-hidden'
+                      : 'relative w-full h-64 sm:h-96 bg-muted rounded-lg overflow-hidden'
+                  }>
+                    {completedImages.length > 1 && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/70 hover:bg-background z-20"
+                          onClick={() => {
+                            const prevIndex = (selectedIndex - 1 + completedImages.length) % completedImages.length;
+                            setSelectedId(completedImages[prevIndex]?.id ?? null);
+                          }}
+                        >
+                          <ChevronLeft className="h-5 w-5" />
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/70 hover:bg-background z-20"
+                          onClick={() => {
+                            const nextIndex = (selectedIndex + 1) % completedImages.length;
+                            setSelectedId(completedImages[nextIndex]?.id ?? null);
+                          }}
+                        >
+                          <ChevronRight className="h-5 w-5" />
+                        </Button>
+
+                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs bg-background/70 px-2 py-1 rounded z-20">
+                          {selectedIndex + 1} / {completedImages.length}
+                        </div>
+                      </>
+                    )}
+
+                    <div className={
+                      isFullscreen
+                        ? 'absolute inset-0 grid grid-cols-2'
+                        : 'absolute inset-0 grid grid-cols-1 sm:grid-cols-2'
+                    } style={{ pointerEvents: 'none' }}>
+                      <div className="relative border-b sm:border-b-0 sm:border-r border-border/40">
+                        <div className="absolute top-2 left-2 text-[11px] px-2 py-1 rounded bg-background/70">Original</div>
+                        <img
+                          src={originalUrls[selectedImage.id] || "/placeholder.svg"}
+                          alt={selectedImage.originalName}
+                          className="h-full w-full object-contain"
+                          onLoad={() => setOriginalLoaded(true)}
+                        />
+                      </div>
+
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 text-[11px] px-2 py-1 rounded bg-background/70">Compressed</div>
+                        <img
+                          src={objectUrls[selectedImage.id] || "/placeholder.svg"}
+                          alt={selectedImage.originalName}
+                          className="h-full w-full object-contain"
+                          onLoad={() => setCompressedLoaded(true)}
+                        />
+                      </div>
+                    </div>
+
+                    {!isPreviewReady && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {!isFullscreen && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="p-4 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Original Size</p>
+                        <p className="text-xl sm:text-2xl font-bold">{formatFileSize(selectedImage.originalSize)}</p>
+                      </div>
+                      <div className="p-4 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-1">Compressed Size</p>
+                        <p className="text-xl sm:text-2xl font-bold">{formatFileSize(selectedImage.compressedSize)}</p>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
               </div>
-
-              {!isFullscreen && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-xs text-muted-foreground mb-1">Original Size</p>
-                    <p className="text-xl sm:text-2xl font-bold">{formatFileSize(selectedImage.originalSize)}</p>
-                  </div>
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-xs text-muted-foreground mb-1">Compressed Size</p>
-                    <p className="text-xl sm:text-2xl font-bold">{formatFileSize(selectedImage.compressedSize)}</p>
-                  </div>
-                </div>
-              )}
-
             </div>
-          </div>
-        </div>
           );
         })()
       )}

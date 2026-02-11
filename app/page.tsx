@@ -10,10 +10,12 @@ import { CompressedGallery } from '@/components/compressed-gallery';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Download, Zap, Settings } from 'lucide-react';
-import JSZip from 'jszip';
+import { Zap, Settings } from 'lucide-react';
+import * as fflate from 'fflate';
 import FileSaver from 'file-saver';
 import { Footer } from '@/components/footer';
+import imageCompression from 'browser-image-compression';
+import pLimit from 'p-limit';
 
 interface UploadedImage {
   id: string;
@@ -32,70 +34,10 @@ interface CompressedImage {
   progress: number;
   status: 'processing' | 'completed' | 'error';
   error?: string;
+  downloadUrl?: string;
 }
 
-const LOCAL_COMPRESS_THRESHOLD_COUNT = 60;
-const LOCAL_COMPRESS_THRESHOLD_BYTES = 300 * 1024 * 1024;
-const DOWNLOAD_ZIP_CHUNK_SIZE = 200;
-
-const compressionWorkerUrl = (() => {
-  const script = `
-    self.onmessage = async (event) => {
-      const data = event.data;
-      const taskId = data.taskId;
-      try {
-        const buffer = data.buffer;
-        const inputType = data.inputType;
-        const format = data.format;
-        const quality = data.quality;
-        const lossless = data.lossless;
-
-        let outputType = 'image/webp';
-        if (format === 'png') outputType = 'image/png';
-        if (format === 'jpg') outputType = 'image/jpeg';
-        if (format === 'webp') outputType = 'image/webp';
-        if (format === 'avif') outputType = 'image/avif';
-
-        const blobIn = new Blob([buffer], { type: inputType });
-        const bitmap = await createImageBitmap(blobIn);
-        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(bitmap, 0, 0);
-
-        const options = { type: outputType };
-        if (outputType === 'image/jpeg' || outputType === 'image/webp' || outputType === 'image/avif') {
-          options.quality = lossless ? 1 : Math.max(0.1, Math.min(1, quality / 100));
-        }
-
-        let outBlob;
-        try {
-          outBlob = await canvas.convertToBlob(options);
-        } catch (e) {
-          outBlob = await canvas.convertToBlob({ type: 'image/webp', quality: lossless ? 1 : Math.max(0.1, Math.min(1, quality / 100)) });
-          outputType = 'image/webp';
-        }
-
-        const outBuffer = await outBlob.arrayBuffer();
-        self.postMessage({ taskId, ok: true, outputType, outBuffer }, [outBuffer]);
-      } catch (err) {
-        self.postMessage({ taskId, ok: false, error: (err && err.message) ? err.message : 'Compression failed' });
-      }
-    };
-  `;
-  return URL.createObjectURL(new Blob([script], { type: 'text/javascript' }));
-})();
-
-const guessInputMime = (file: File) => {
-  if (file.type) return file.type;
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  if (ext === 'png') return 'image/png';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'avif') return 'image/avif';
-  return 'application/octet-stream';
-};
-
-const createCompressionWorker = () => new Worker(compressionWorkerUrl);
+const DOWNLOAD_ZIP_CHUNK_SIZE = 50; // Optimized for fflate
 
 export default function Home() {
   const { data: session } = useSession();
@@ -107,7 +49,7 @@ export default function Home() {
   const [compressionSettings, setCompressionSettings] = useState<CompressionSettings>({
     format: 'webp',
     quality: 80,
-    lossless: true, // Default to lossless compression
+    lossless: false,
   });
 
   const isPro = (session?.user as any)?.isPro;
@@ -123,60 +65,15 @@ export default function Home() {
   const formatSettingsDisplay = () => {
     const format = compressionSettings.format.toUpperCase();
     const quality = compressionSettings.quality;
-    const lossless = compressionSettings.lossless;
-    return `${format} • ${quality}%${lossless ? ' • Lossless' : ''}`;
+    // Browser-image-compression doesn't support "lossless" bool directly in the same way, 
+    // but we can simulate high quality.
+    return `${format} • ${quality}%`;
   };
 
   const completedCount = React.useMemo(
     () => compressedImages.reduce((count, img) => count + (img.status === 'completed' ? 1 : 0), 0),
     [compressedImages]
   );
-
-  const compressLocally = useCallback(async (image: UploadedImage, worker: Worker) => {
-    const inputType = guessInputMime(image.file);
-    const buffer = await image.file.arrayBuffer();
-
-    return await new Promise<{ blob: Blob; mimeType: string }>((resolve, reject) => {
-      const taskId = image.id;
-
-      const onMessage = (e: MessageEvent) => {
-        const msg = e.data;
-        if (!msg || msg.taskId !== taskId) return;
-
-        worker.removeEventListener('message', onMessage);
-        worker.removeEventListener('error', onError);
-
-        if (!msg.ok) {
-          reject(new Error(msg.error || 'Compression failed'));
-          return;
-        }
-
-        const outBuffer: ArrayBuffer = msg.outBuffer;
-        const mimeType: string = msg.outputType || 'application/octet-stream';
-        resolve({ blob: new Blob([outBuffer], { type: mimeType }), mimeType });
-      };
-
-      const onError = () => {
-        worker.removeEventListener('message', onMessage);
-        worker.removeEventListener('error', onError);
-        reject(new Error('Compression worker error'));
-      };
-
-      worker.addEventListener('message', onMessage);
-      worker.addEventListener('error', onError);
-      worker.postMessage(
-        {
-          taskId,
-          buffer,
-          inputType,
-          format: compressionSettings.format,
-          quality: compressionSettings.quality,
-          lossless: compressionSettings.lossless,
-        },
-        [buffer]
-      );
-    });
-  }, [compressionSettings.format, compressionSettings.lossless, compressionSettings.quality]);
 
   const handleImagesSelected = useCallback((images: UploadedImage[]) => {
     if (images.length > BATCH_LIMIT) {
@@ -206,6 +103,7 @@ export default function Home() {
     setIsProcessing(true);
     setEtaSeconds(null);
 
+    // Initialize compressed images state
     const initialCompressed: CompressedImage[] = uploadedImages.map((img) => ({
       id: img.id,
       originalName: img.file.name,
@@ -222,10 +120,8 @@ export default function Home() {
     const startMs = performance.now();
     let finishedCount = 0;
 
-    const totalBytes = uploadedImages.reduce((sum, img) => sum + img.originalSize, 0);
-    const useLocal = uploadedImages.length >= LOCAL_COMPRESS_THRESHOLD_COUNT || totalBytes >= LOCAL_COMPRESS_THRESHOLD_BYTES;
-
-    const worker = useLocal ? createCompressionWorker() : null;
+    // Concurrency limit: 2-3 is safe for browser
+    const limit = pLimit(2);
 
     const compressOne = async (image: UploadedImage) => {
       setCompressedImages((prev) =>
@@ -237,72 +133,49 @@ export default function Home() {
       );
 
       try {
-        let mimeType = 'application/octet-stream';
-        let compressedBlob: Blob;
-        let compressedSize = 0;
+        const options = {
+          maxSizeMB: 1, // Default fallback, but we rely mostly on quality/maxWidth
+          maxWidthOrHeight: 1920,
+          useWebWorker: true,
+          fileType: `image/${compressionSettings.format}` as string,
+          initialQuality: compressionSettings.quality / 100,
+        };
 
-        if (useLocal && worker) {
-          setCompressedImages((prev) =>
-            prev.map((img) => (img.id === image.id ? { ...img, progress: 40 } : img))
-          );
-
-          const local = await compressLocally(image, worker);
-          compressedBlob = local.blob;
-          mimeType = local.mimeType;
-          compressedSize = compressedBlob.size;
-        } else {
-          const formData = new FormData();
-          formData.append('file', image.file);
-          formData.append('format', compressionSettings.format);
-          formData.append('quality', compressionSettings.quality.toString());
-          formData.append('lossless', compressionSettings.lossless.toString());
-
-          const response = await fetch('/api/compress', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!response.ok) {
-            let message = 'Compression failed';
-            try {
-              const err = await response.json();
-              message = err?.error || err?.message || message;
-            } catch {
-              const text = await response.text().catch(() => '');
-              if (text) message = text;
-            }
-            throw new Error(message);
-          }
-
-          mimeType = response.headers.get('content-type') || 'application/octet-stream';
-          const compressedSizeHeader = response.headers.get('x-compressed-size');
-          compressedBlob = await response.blob();
-          compressedSize = compressedSizeHeader ? Number(compressedSizeHeader) : compressedBlob.size;
+        // Adjust for PNG/lossless if needed (basic mapping)
+        if (compressionSettings.format === 'png') {
+          // browser-image-compression handles png, but quality might be less effective than JPG/WebP
         }
+
+        const compressedBlob = await imageCompression(image.file, options);
+
+        // Create download URL
+        const downloadUrl = URL.createObjectURL(compressedBlob);
 
         setCompressedImages((prev) =>
           prev.map((img) =>
             img.id === image.id
               ? {
-                  ...img,
-                  compressedBlob: compressedBlob.type === mimeType ? compressedBlob : new Blob([compressedBlob], { type: mimeType }),
-                  compressedSize,
-                  progress: 100,
-                  status: 'completed',
-                }
+                ...img,
+                compressedBlob,
+                compressedSize: compressedBlob.size,
+                progress: 100,
+                status: 'completed',
+                downloadUrl
+              }
               : img
           )
         );
       } catch (error) {
+        console.error("Compression error:", error);
         setCompressedImages((prev) =>
           prev.map((img) =>
             img.id === image.id
               ? {
-                  ...img,
-                  status: 'error',
-                  error: error instanceof Error ? error.message : 'Unknown error',
-                  progress: 0,
-                }
+                ...img,
+                status: 'error',
+                error: error instanceof Error ? error.message : 'Unknown error',
+                progress: 0,
+              }
               : img
           )
         );
@@ -317,30 +190,19 @@ export default function Home() {
       }
     };
 
-    const concurrencyBase = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?? 4 : 4;
-    const concurrency = Math.min(uploadedImages.length, isPro ? 6 : 3, Math.max(2, Math.floor(concurrencyBase / 2)));
-
-    const queue = [...uploadedImages];
-    const workers = new Array(concurrency).fill(0).map(async () => {
-      while (queue.length > 0) {
-        const next = queue.shift();
-        if (!next) break;
-        await compressOne(next);
-      }
-    });
-
-    await Promise.all(workers);
-
-    if (worker) worker.terminate();
+    const tasks = uploadedImages.map(image => limit(() => compressOne(image)));
+    await Promise.all(tasks);
 
     setIsProcessing(false);
     setEtaSeconds(null);
-  }, [uploadedImages, compressionSettings.format, compressionSettings.lossless, compressionSettings.quality, compressLocally, isPro]);
+  }, [uploadedImages, compressionSettings]);
 
   const downloadSingle = (image: CompressedImage) => {
-    const ext = compressionSettings.format === 'jpg' ? 'jpeg' : compressionSettings.format;
-    const filename = image.originalName.replace(/\.[^/.]+$/, `.${ext}`);
-    FileSaver.saveAs(image.compressedBlob, filename);
+    if (image.downloadUrl) {
+      const ext = compressionSettings.format === 'jpg' ? 'jpeg' : compressionSettings.format;
+      const filename = image.originalName.replace(/\.[^/.]+$/, `.${ext}`);
+      FileSaver.saveAs(image.compressedBlob, filename);
+    }
   };
 
   const downloadAll = async () => {
@@ -348,21 +210,48 @@ export default function Home() {
     if (completed.length === 0) return;
 
     const ext = compressionSettings.format === 'jpg' ? 'jpeg' : compressionSettings.format;
-    const chunkSize = completed.length > DOWNLOAD_ZIP_CHUNK_SIZE ? DOWNLOAD_ZIP_CHUNK_SIZE : completed.length;
 
+    // Chunking for huge batches to avoid memory spikes
+    const chunkSize = completed.length > DOWNLOAD_ZIP_CHUNK_SIZE ? DOWNLOAD_ZIP_CHUNK_SIZE : completed.length;
     const chunks: CompressedImage[][] = [];
     for (let i = 0; i < completed.length; i += chunkSize) {
       chunks.push(completed.slice(i, i + chunkSize));
     }
 
+    const createZip = (images: CompressedImage[], filename: string) => {
+      return new Promise<void>((resolve, reject) => {
+        const zipFiles: fflate.AsyncZippable = {};
+
+        // Read all blobs as Uint8Array
+        let processed = 0;
+        if (images.length === 0) {
+          resolve();
+          return;
+        }
+
+        images.forEach(async (img) => {
+          const imgName = img.originalName.replace(/\.[^/.]+$/, `.${ext}`);
+          const buf = await img.compressedBlob.arrayBuffer();
+          zipFiles[imgName] = new Uint8Array(buf) as unknown as Uint8Array;
+
+          processed++;
+          if (processed === images.length) {
+            fflate.zip(zipFiles, (err, data) => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              const blob = new Blob([data as any], { type: 'application/zip' });
+              FileSaver.saveAs(blob, filename);
+              resolve();
+            });
+          }
+        });
+      });
+    };
+
     if (chunks.length === 1) {
-      const zip = new JSZip();
-      for (const image of chunks[0]) {
-        const filename = image.originalName.replace(/\.[^/.]+$/, `.${ext}`);
-        zip.file(filename, image.compressedBlob);
-      }
-      const blob = await zip.generateAsync({ type: 'blob' });
-      FileSaver.saveAs(blob, 'compressed-images.zip');
+      await createZip(chunks[0], 'compressed-images.zip');
       return;
     }
 
@@ -372,17 +261,21 @@ export default function Home() {
 
     let idx = 1;
     for (const chunk of chunks) {
-      const zip = new JSZip();
-      for (const image of chunk) {
-        const filename = image.originalName.replace(/\.[^/.]+$/, `.${ext}`);
-        zip.file(filename, image.compressedBlob);
-      }
-      const blob = await zip.generateAsync({ type: 'blob' });
-      FileSaver.saveAs(blob, `compressed-images-part-${idx}.zip`);
+      await createZip(chunk, `compressed-images-part-${idx}.zip`);
       idx += 1;
-      await new Promise((r) => setTimeout(r, 150));
+      // Small delay to prevent UI freeze
+      await new Promise((r) => setTimeout(r, 200));
     }
   };
+
+  // Cleanup object URLs on unmount
+  React.useEffect(() => {
+    return () => {
+      compressedImages.forEach(img => {
+        if (img.downloadUrl) URL.revokeObjectURL(img.downloadUrl);
+      });
+    };
+  }, [compressedImages]);
 
   // Optimize size calculations to prevent re-renders
   const sizeCalculations = React.useMemo(() => {
@@ -390,7 +283,7 @@ export default function Home() {
     const totalCompressedSize = compressedImages.reduce((sum, img) => sum + img.compressedSize, 0);
     const totalSaved = totalOriginalSize - totalCompressedSize;
     const compressionRate = totalOriginalSize > 0 ? Math.round(((totalSaved / totalOriginalSize) * 100 + Number.EPSILON) * 100) / 100 : 0;
-    
+
     return {
       totalOriginalSize,
       totalCompressedSize,
@@ -399,11 +292,19 @@ export default function Home() {
   }, [compressedImages]);
 
   const handleReset = () => {
+    // Cleanup URLs before clearing state
+    compressedImages.forEach(img => {
+      if (img.downloadUrl) URL.revokeObjectURL(img.downloadUrl);
+    });
     setUploadedImages([]);
     setCompressedImages([]);
   };
 
   const handleRemove = (id: string) => {
+    const imgToRemove = compressedImages.find(img => img.id === id);
+    if (imgToRemove?.downloadUrl) {
+      URL.revokeObjectURL(imgToRemove.downloadUrl);
+    }
     setUploadedImages((prev) => prev.filter((img) => img.id !== id));
     setCompressedImages((prev) => prev.filter((img) => img.id !== id));
   };
@@ -432,8 +333,8 @@ export default function Home() {
             <div className="mb-8">
               <Card className="h-24 md:h-28 flex items-center justify-center bg-muted/30 border border-dashed">
                 <div className="text-center">
-                  <p className="text-sm font-semibold">Pro Feature Hint</p>
-                  <p className="text-xs text-muted-foreground">Priority processing active for Pro members</p>
+                  <p className="text-sm font-semibold">Client-Side Compression</p>
+                  <p className="text-xs text-muted-foreground">Images never leave your device. Privacy first.</p>
                 </div>
               </Card>
             </div>
@@ -476,7 +377,7 @@ export default function Home() {
                           <span className="text-xs text-muted-foreground">({uploadedImages.length} images)</span>
                         )}
                       </div>
-                      
+
                       <Dialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
                         <DialogTrigger asChild>
                           <Button variant="ghost" size="sm" className="gap-2 h-8 px-3">
@@ -488,9 +389,9 @@ export default function Home() {
                           <DialogHeader>
                             <DialogTitle>Compression Settings</DialogTitle>
                           </DialogHeader>
-                          <CompressionOptions 
-                            settings={compressionSettings} 
-                            onSettingsChange={setCompressionSettings} 
+                          <CompressionOptions
+                            settings={compressionSettings}
+                            onSettingsChange={setCompressionSettings}
                           />
                         </DialogContent>
                       </Dialog>
@@ -534,12 +435,12 @@ export default function Home() {
                         <span className="text-lg text-muted-foreground">/ {compressedImages.length}</span>
                       </div>
                       {isProcessing && (
-                        <div className="absolute bottom-0 left-0 h-1 bg-accent/20 animate-pulse" 
-                             style={{ width: `${compressedImages.length > 0 ? (completedCount / compressedImages.length) * 100 : 0}%` }}>
+                        <div className="absolute bottom-0 left-0 h-1 bg-accent/20 animate-pulse"
+                          style={{ width: `${compressedImages.length > 0 ? (completedCount / compressedImages.length) * 100 : 0}%` }}>
                         </div>
                       )}
                       {!isProcessing && completedCount === compressedImages.length && compressedImages.length > 0 && (
-                       <div className="absolute -top-[-5px] -right-[-5px]">
+                        <div className="absolute -top-[-5px] -right-[-5px]">
                           <span className="flex h-3 w-3">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-3 w-3 bg-accent"></span>
@@ -567,10 +468,10 @@ export default function Home() {
                   images={compressedImages}
                   onDownload={downloadSingle}
                   onRemove={handleRemove}
-                  showIndividualDownload={completedCount < 20}
+                  showIndividualDownload={true}
                   showModalDownload={true}
                   showHeaderDownloadAll={false}
-                  showZipDownload={completedCount >= 5}
+                  showZipDownload={completedCount >= 2}
                   onDownloadZip={downloadAll}
                 />
 

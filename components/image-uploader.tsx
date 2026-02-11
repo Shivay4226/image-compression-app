@@ -62,9 +62,31 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
   const [attemptedTotalCount, setAttemptedTotalCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 100;
+
+  const totalPages = Math.ceil(uploadedImages.length / ITEMS_PER_PAGE);
+
+  const paginatedImages = uploadedImages.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    } else if (totalPages > 0 && currentPage === 0) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
+
+  useEffect(() => {
+    if (uploadedImages.length === 0) setCurrentPage(1);
+  }, [uploadedImages.length]);
+
   const validateFiles = (files: File[]): string | null => {
     if (files.length === 0) return 'No files selected';
-    
+
     const totalCount = uploadedImages.length + files.length;
     const isPro = (session?.user as any)?.isPro;
 
@@ -349,7 +371,7 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
 
           {viewMode === 'grid' && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-              {uploadedImages.map((image) => (
+              {paginatedImages.map((image) => (
                 <div key={image.id} className="relative group">
                   <Card className="overflow-hidden aspect-square">
                     <img
@@ -374,7 +396,7 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
 
           {viewMode === 'list' && (
             <div className="space-y-2 border rounded-lg divide-y">
-              {uploadedImages.map((image) => (
+              {paginatedImages.map((image) => (
                 <div key={image.id} className="p-3 hover:bg-muted/30 transition-colors flex items-center gap-3">
                   <input
                     type="checkbox"
@@ -401,6 +423,30 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 mt-4 pt-2 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground mx-2">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
             </div>
           )}
         </div>
