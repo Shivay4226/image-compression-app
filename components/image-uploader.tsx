@@ -36,7 +36,8 @@ interface UploadedImage {
 }
 
 const SUPPORTED_FORMATS = ['png', 'jpg', 'jpeg', 'webp', 'avif'];
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const FREE_MAX_FILE_SIZE = 10 * 1024 * 1024;
+const PRO_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 const MAX_TOTAL_SIZE = 4 * 1024 * 1024 * 1024;
 const FREE_MAX_IMAGES = 100;
 const PRO_MAX_IMAGES = 1000;
@@ -86,9 +87,10 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
 
   const validateFiles = (files: File[]): string | null => {
     if (files.length === 0) return 'No files selected';
-
+    
     const totalCount = uploadedImages.length + files.length;
     const isPro = (session?.user as any)?.isPro;
+    const maxFileSize = isPro ? PRO_MAX_FILE_SIZE : FREE_MAX_FILE_SIZE;
 
     if (!isPro && totalCount > FREE_MAX_IMAGES) {
       setAttemptedTotalCount(totalCount);
@@ -106,8 +108,9 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
         return `Unsupported format: ${ext}. Supported: ${SUPPORTED_FORMATS.join(', ')}`;
       }
 
-      if (file.size > MAX_FILE_SIZE) {
-        return `File "${file.name}" exceeds 10MB limit`;
+      if (file.size > maxFileSize) {
+        const limitLabel = isPro ? '1GB' : '10MB';
+        return `File "${file.name}" exceeds ${limitLabel} limit`;
       }
     }
 
@@ -294,7 +297,7 @@ export function ImageUploader({ onImagesSelected, disabled, onCompress, isCompre
           or click to browse from your computer
         </p>
         <p className="text-xs text-muted-foreground mt-3 opacity-70">
-          PNG, JPG, WebP, AVIF • Max 10MB each • Total up to 4GB • Free up to {FREE_MAX_IMAGES} images (Pro up to {PRO_MAX_IMAGES})
+          PNG, JPG, WebP, AVIF • Max 10MB each (Free) / 1GB each (Pro) • Total up to 4GB • Free up to {FREE_MAX_IMAGES} images (Pro up to {PRO_MAX_IMAGES})
         </p>
       </div>
 
